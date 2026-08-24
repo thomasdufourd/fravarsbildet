@@ -10,12 +10,9 @@
 *.code-workspace
 
 # pnpm store
-*/.pnpm-store
-# Logs
-logs
-*.log
-npm-debug.log*
+.pnpm-store/
 
+# Ignore Mac system files
 .DS_Store
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
