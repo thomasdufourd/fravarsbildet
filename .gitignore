@@ -1,0 +1,41 @@
+# dotenv environment variables file
+.env
+.env.test
+
+# Ignore Intellij project-specific directory
+.idea
+
+# Ignore Visual Studio Code project-specific directory
+.vscode
+*.code-workspace
+
+# pnpm store
+*/.pnpm-store
+# Logs
+logs
+*.log
+npm-debug.log*
+
+.DS_Store
+
+# Diagnostic reports (https://nodejs.org/api/report.html)
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Compiled binary addons (https://nodejs.org/api/addons.html)
+build/Release
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# TypeScript v1 declaration files
+typings/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
