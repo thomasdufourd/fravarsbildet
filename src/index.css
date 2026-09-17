@@ -1,1 +1,446 @@
-@import "tailwindcss";
+/* Fraværsbildet — prototype
+   Tokens ligger nær Aksel, slik at de kan byttes mot @navikt/ds-css
+   uten at markup må skrives om. */
+
+:root {
+  --blaa: #0067c5;
+  --blaa-mork: #00459e;
+  --blaa-lys: #e6f0ff;
+  --blekk: #23262a;
+  --graa: #5b6270;
+  --kant: #dde1e6;
+  --kant-sterk: #b7bdc4;
+  --flate: #ffffff;
+  --side: #f4f5f6;
+
+  --konsoll: #16181d;
+  --konsoll-flate: #1f232a;
+  --konsoll-kant: #2e343d;
+  --konsoll-tekst: #c7cdd6;
+  --konsoll-dempet: #7c8492;
+  --utslag: #4fd48a;
+  --mangler: #ffb35c;
+
+  --radius: 4px;
+  --radius-stor: 8px;
+  --sans: "Source Sans 3", "Source Sans Pro", system-ui, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "IBM Plex Mono", Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  color: var(--blekk);
+  background: var(--side);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Ramme ---------- */
+
+.app {
+  padding: 16px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.app__topp {
+  margin-bottom: 16px;
+}
+
+.app__tittel {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.app__ingress {
+  font-size: 14px;
+  color: var(--graa);
+  margin: 0 0 12px;
+}
+
+.app__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (min-width: 1000px) {
+  .app__grid {
+    grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+  }
+}
+
+/* ---------- Scenarioknapper ---------- */
+
+.scenarier {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scenario {
+  font-family: var(--sans);
+  font-size: 14px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--kant);
+  background: var(--flate);
+  color: var(--blekk);
+  cursor: pointer;
+}
+
+.scenario--valgt {
+  border-color: var(--blaa);
+  background: var(--blaa);
+  color: #fff;
+}
+
+/* ---------- Konsoll ---------- */
+
+.konsoll {
+  background: var(--konsoll);
+  border-radius: var(--radius-stor);
+  padding: 16px;
+  align-self: start;
+}
+
+.konsoll__bolk {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--konsoll-dempet);
+  margin: 20px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--konsoll-kant);
+}
+
+.konsoll__bolk--forst {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.konsoll__knapp {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--konsoll-dempet);
+  background: none;
+  border: none;
+  border-top: 1px solid var(--konsoll-kant);
+  width: 100%;
+  text-align: left;
+  padding: 14px 0 10px;
+  margin-top: 20px;
+  cursor: pointer;
+}
+
+.skyv {
+  margin-bottom: 12px;
+}
+
+.skyv__rad {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.skyv__etikett {
+  font-size: 12px;
+  color: var(--konsoll-tekst);
+}
+
+.skyv__verdi {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--utslag);
+}
+
+.skyv input[type="range"] {
+  width: 100%;
+  accent-color: var(--blaa);
+}
+
+.valg {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.valg__knapp {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 3px;
+  border: 1px solid var(--konsoll-kant);
+  background: none;
+  color: var(--konsoll-dempet);
+  cursor: pointer;
+}
+
+.valg__knapp--valgt {
+  border-color: var(--utslag);
+  color: var(--utslag);
+}
+
+.regel {
+  background: var(--konsoll-flate);
+  border-radius: var(--radius);
+  border-left: 2px solid var(--konsoll-kant);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.regel--SLAR_UT {
+  border-left-color: var(--utslag);
+}
+.regel--IKKE_NOK_DATA,
+.regel--TRENGER_SVAR {
+  border-left-color: var(--mangler);
+}
+
+.regel__topp {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.regel__navn {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--konsoll-tekst);
+}
+
+.regel__forklaring {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--konsoll-dempet);
+  margin: 0;
+  line-height: 1.6;
+}
+
+.merke {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+.merke--SLAR_UT {
+  color: var(--utslag);
+}
+.merke--SLAR_IKKE_UT {
+  color: var(--konsoll-dempet);
+}
+.merke--IKKE_NOK_DATA,
+.merke--TRENGER_SVAR {
+  color: var(--mangler);
+}
+
+.kontrakt {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--utslag);
+  background: var(--konsoll-flate);
+  padding: 12px;
+  border-radius: var(--radius);
+  overflow-x: auto;
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* ---------- Tjenesteskjerm ---------- */
+
+.skjerm__merkelapp {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--graa);
+  margin: 0 0 10px;
+}
+
+.kort {
+  background: var(--flate);
+  border: 1px solid var(--kant);
+  border-radius: var(--radius-stor);
+  padding: 20px;
+  margin-bottom: 12px;
+}
+
+.kort--tiltak {
+  border: 2px solid var(--blaa);
+}
+
+.kort__hode {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--graa);
+  margin-bottom: 12px;
+}
+
+.etikett {
+  font-size: 13px;
+  color: var(--graa);
+  margin: 0 0 6px;
+}
+
+.overskrift {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0 0 8px;
+}
+
+.brodtekst {
+  font-size: 15px;
+  color: var(--graa);
+  line-height: 1.6;
+  margin: 0 0 10px;
+}
+
+.brodtekst--sist {
+  margin-bottom: 0;
+}
+
+.tagg {
+  display: inline-block;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--kant-sterk);
+  color: var(--graa);
+  margin-bottom: 12px;
+}
+
+.tagg--aksent {
+  background: var(--blaa-lys);
+  border-color: transparent;
+  color: var(--blaa-mork);
+  margin-bottom: 10px;
+}
+
+.tall {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.tall__kort {
+  background: var(--side);
+  border-radius: var(--radius);
+  padding: 16px;
+  min-width: 0;
+}
+
+.tall__etikett {
+  font-size: 13px;
+  color: var(--graa);
+  margin: 0 0 4px;
+}
+
+.tall__verdi {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.boks {
+  background: var(--side);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.boks__tekst {
+  font-size: 15px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.liste {
+  border-top: 1px solid var(--kant);
+  margin-top: 12px;
+}
+
+.liste__rad {
+  font-size: 15px;
+  margin: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--kant);
+  line-height: 1.5;
+}
+
+.tiltak__tittel {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.tid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.tid__brikke {
+  font-size: 13px;
+  border: 1px solid var(--kant);
+  border-radius: var(--radius);
+  padding: 5px 10px;
+  color: var(--graa);
+}
+
+.knapper {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.knapp {
+  font-family: var(--sans);
+  font-size: 15px;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--blaa);
+  background: var(--blaa);
+  color: #fff;
+  cursor: pointer;
+}
+
+.knapp--sekundar {
+  background: none;
+  color: var(--blaa);
+}
+
+.fotnote {
+  font-size: 13px;
+  color: var(--graa);
+  line-height: 1.6;
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--kant);
+}
+
+.hjelpetekst {
+  font-size: 13px;
+  color: var(--graa);
+  line-height: 1.6;
+  margin: 12px 0 0;
+}
