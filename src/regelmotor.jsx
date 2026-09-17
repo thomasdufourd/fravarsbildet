@@ -2,205 +2,180 @@ import { useState, useMemo } from "react";
 
 /* ============================================================================
    MOTOREN
-   Alt mellom denne kommentaren og «SLUTT MOTOR» er rene funksjoner uten
-   React-avhengigheter. Denne blokken kan klippes ut og legges i src/motor/
-   uten endringer. Tekst finnes ikke her — motoren returnerer struktur.
+   Rene funksjoner. Ingen React, ingen tekst. Flyttes til motor/ når
+   prosjektet settes opp for alvor.
    ========================================================================= */
 
-const TILSTAND = {
+export const TILSTAND = {
   SLAR_UT: "SLAR_UT",
   SLAR_IKKE_UT: "SLAR_IKKE_UT",
   IKKE_NOK_DATA: "IKKE_NOK_DATA",
+  TRENGER_SVAR: "TRENGER_SVAR",
 };
 
-const STANDARDTERSKLER = {
-  // Visningsterskel — kan vi vise tall?
-  visningMinAnsatte: 5,
-  visningMinTilfeller: 5,
-  visningMinNevner: 5,
-  // Mønsterterskel — ett beviskrav per regel
-  enhetMinAnsatte: 20,
-  gjentakMinKorttid: 6,
-  gjentakAndelAvKorttid: 0.6,
-  gjentakMaksAndelAnsatte: 0.25,
-  graderingMinNevner: 5,
-  graderingAvvikProsentpoeng: 20,
-  langtidMinTilfeller: 4,
-  langtidMinAndel: 0.5,
+export const STANDARDTERSKLER = {
+  klyngeMinAarsverk: 20,
+  gjentakScreeningFaktor: 1.5,
+  graderingFaktor: 0.6,
+  langtidAvvikPp: 10,
+  godSikkerhetMinDagsverk: 2000,
+  dagsverkPerAarsverk: 230,
 };
 
-function avled(i) {
-  const korttidstilfeller = Math.max(0, i.tilfellerTotalt - i.tilfellerLangtid);
+export function avled(d, T) {
   return {
-    korttidstilfeller,
-    andelFraGjentakere:
-      korttidstilfeller > 0 ? i.tilfellerFraGjentakere / korttidstilfeller : 0,
-    gjentakereAvAnsatte:
-      i.ansatte > 0 ? i.personerMedGjentakelse / i.ansatte : 0,
-    graderingsandel:
-      i.sykmeldtePersoner > 0
-        ? (i.graderteSykmeldte / i.sykmeldtePersoner) * 100
-        : 0,
-    langtidsandel:
-      i.tilfellerTotalt > 0 ? i.tilfellerLangtid / i.tilfellerTotalt : 0,
+    aarsverk: d.muligeDagsverk / T.dagsverkPerAarsverk,
+    egenKorttid: 100 - d.egenLangtidsandel,
+    bransjeKorttid: 100 - d.bransjeLangtidsandel,
   };
 }
 
-const REGLER = [
+const p1 = (x) => `${x.toFixed(1).replace(".", ",")} %`;
+const p0 = (x) => `${Math.round(x)} %`;
+
+export const REGLER = [
   {
-    id: "enhetsklynge",
-    navn: "Klynge i én enhet",
+    id: "klynge",
+    navn: "Klynge i én del av virksomheten",
     prioritet: 1,
-    vurder(i, a, T) {
-      if (i.ansatte < T.enhetMinAnsatte)
-        return {
-          tilstand: TILSTAND.IKKE_NOK_DATA,
-          forklaring: `${i.ansatte} ansatte er under kravet på ${T.enhetMinAnsatte}. Det finnes ikke enheter å sammenligne.`,
-        };
-      if (i.enhetskonsentrasjon === "vetIkke")
-        return {
-          tilstand: TILSTAND.IKKE_NOK_DATA,
-          forklaring: "Arbeidsgiver svarte «vet ikke». Det er ikke et nei.",
-        };
-      if (i.enhetskonsentrasjon === "ja")
-        return {
-          tilstand: TILSTAND.SLAR_UT,
-          forklaring: "Arbeidsgiver oppgir at fraværet er samlet i én enhet.",
-        };
-      return {
-        tilstand: TILSTAND.SLAR_IKKE_UT,
-        forklaring: "Arbeidsgiver oppgir at fraværet ikke er samlet i én enhet.",
-      };
+    grunnlag: "egenvurdering",
+    vurder(d, a, T) {
+      if (a.aarsverk < T.klyngeMinAarsverk)
+        return [
+          TILSTAND.IKKE_NOK_DATA,
+          `Tilsvarer ${a.aarsverk.toFixed(0)} årsverk, under kravet på ${T.klyngeMinAarsverk}.`,
+        ];
+      if (d.klyngeSvar === "ubesvart")
+        return [TILSTAND.TRENGER_SVAR, "Kan ikke avgjøres uten svar fra arbeidsgiver."];
+      if (d.klyngeSvar === "vetIkke")
+        return [TILSTAND.IKKE_NOK_DATA, "Arbeidsgiver svarte «vet ikke». Det er ikke et nei."];
+      if (d.klyngeSvar === "ja")
+        return [TILSTAND.SLAR_UT, "Arbeidsgiver oppgir at fraværet er samlet i én del."];
+      return [TILSTAND.SLAR_IKKE_UT, "Arbeidsgiver oppgir at fraværet ikke er samlet i én del."];
     },
   },
   {
-    id: "gjentakendeKorttid",
-    navn: "Gjentakende korttid hos få personer",
+    id: "gjentakende",
+    navn: "Gjentakende korte fravær",
     prioritet: 2,
-    vurder(i, a, T) {
-      if (a.korttidstilfeller < T.gjentakMinKorttid)
-        return {
-          tilstand: TILSTAND.IKKE_NOK_DATA,
-          forklaring: `${a.korttidstilfeller} korttidstilfeller er under kravet på ${T.gjentakMinKorttid}.`,
-        };
-      const andelOk = a.andelFraGjentakere >= T.gjentakAndelAvKorttid;
-      const fåOk = a.gjentakereAvAnsatte <= T.gjentakMaksAndelAnsatte;
-      if (i.personerMedGjentakelse === 0)
-        return {
-          tilstand: TILSTAND.SLAR_IKKE_UT,
-          forklaring: "Ingen har fire eller flere korttidsfravær.",
-        };
-      if (andelOk && fåOk)
-        return {
-          tilstand: TILSTAND.SLAR_UT,
-          forklaring: `${i.personerMedGjentakelse} personer står bak ${pst(
-            a.andelFraGjentakere
-          )} av korttidstilfellene, og utgjør ${pst(
-            a.gjentakereAvAnsatte
-          )} av de ansatte.`,
-        };
-      return {
-        tilstand: TILSTAND.SLAR_IKKE_UT,
-        forklaring: !andelOk
-          ? `Gjentakerne står for ${pst(a.andelFraGjentakere)} av korttidstilfellene. Kravet er ${pst(T.gjentakAndelAvKorttid)}.`
-          : `Gjentakerne utgjør ${pst(a.gjentakereAvAnsatte)} av de ansatte. Det er for stor del av bedriften til å kalles «få personer».`,
-      };
+    grunnlag: "hybrid",
+    vurder(d, a, T) {
+      const grense = T.gjentakScreeningFaktor * a.bransjeKorttid;
+      if (a.egenKorttid < grense)
+        return [
+          TILSTAND.SLAR_IKKE_UT,
+          `Korte legemeldte fravær utgjør ${p0(a.egenKorttid)} av dagsverkene, under screeningen på ${p0(grense)}.`,
+        ];
+      if (d.gjentakelseSvar === "ubesvart")
+        return [
+          TILSTAND.TRENGER_SVAR,
+          `Screeningen traff: ${p0(a.egenKorttid)} mot ${p0(a.bransjeKorttid)} i bransjen. Trenger bekreftelse.`,
+        ];
+      if (d.gjentakelseSvar === "vetIkke")
+        return [TILSTAND.IKKE_NOK_DATA, "Arbeidsgiver svarte «vet ikke». Det er ikke et nei."];
+      if (d.gjentakelseSvar === "ja")
+        return [
+          TILSTAND.SLAR_UT,
+          `${p0(a.egenKorttid)} av dagsverkene er korte fravær, mot ${p0(a.bransjeKorttid)} i bransjen, og arbeidsgiver bekrefter gjentakelse.`,
+        ];
+      return [TILSTAND.SLAR_IKKE_UT, "Arbeidsgiver oppgir at det ikke er noen få som går igjen."];
     },
   },
   {
-    id: "lavGradering",
+    id: "gradering",
     navn: "Lav gradering",
     prioritet: 3,
-    vurder(i, a, T) {
-      if (i.sykmeldtePersoner < T.graderingMinNevner)
-        return {
-          tilstand: TILSTAND.IKKE_NOK_DATA,
-          forklaring: `${i.sykmeldtePersoner} sykmeldte er under nevnerkravet på ${T.graderingMinNevner}. Andel kan ikke beregnes.`,
-        };
-      const grense = i.bransjeGradering - T.graderingAvvikProsentpoeng;
-      if (a.graderingsandel <= grense)
-        return {
-          tilstand: TILSTAND.SLAR_UT,
-          forklaring: `${Math.round(a.graderingsandel)} % delvis sykmeldte mot ${i.bransjeGradering} % i bransjen. Grensen er ${Math.round(grense)} %.`,
-        };
-      return {
-        tilstand: TILSTAND.SLAR_IKKE_UT,
-        forklaring: `${Math.round(a.graderingsandel)} % delvis sykmeldte ligger ikke ${T.graderingAvvikProsentpoeng} prosentpoeng under bransjen.`,
-      };
+    grunnlag: "navtall",
+    vurder(d, a, T) {
+      if (d.bransjeGradering <= 0)
+        return [TILSTAND.IKKE_NOK_DATA, "Mangler bransjetall for gradering."];
+      const grense = T.graderingFaktor * d.bransjeGradering;
+      if (d.egenGradering <= grense)
+        return [
+          TILSTAND.SLAR_UT,
+          `${p0(d.egenGradering)} av dagsverkene delvis arbeidet, mot ${p0(d.bransjeGradering)} i bransjen. Grensen er ${p0(grense)}.`,
+        ];
+      return [
+        TILSTAND.SLAR_IKKE_UT,
+        `${p0(d.egenGradering)} delvis arbeidet ligger ikke under ${p0(grense)}.`,
+      ];
     },
   },
   {
-    id: "langtidUtenforJobb",
+    id: "langtid",
     navn: "Langtid dominerer bildet",
     prioritet: 4,
-    vurder(i, a, T) {
-      if (i.tilfellerTotalt < T.langtidMinTilfeller)
-        return {
-          tilstand: TILSTAND.IKKE_NOK_DATA,
-          forklaring: `${i.tilfellerTotalt} tilfeller er under kravet på ${T.langtidMinTilfeller}.`,
-        };
-      if (i.tilfellerLangtid >= 1 && a.langtidsandel >= T.langtidMinAndel)
-        return {
-          tilstand: TILSTAND.SLAR_UT,
-          forklaring: `${pst(a.langtidsandel)} av tilfellene varte lenger enn 16 dager.`,
-        };
-      return {
-        tilstand: TILSTAND.SLAR_IKKE_UT,
-        forklaring: `${pst(a.langtidsandel)} av tilfellene er langtid. Kravet er ${pst(T.langtidMinAndel)}.`,
-      };
+    grunnlag: "navtall",
+    vurder(d, a, T) {
+      const grense = d.bransjeLangtidsandel + T.langtidAvvikPp;
+      if (d.egenLangtidsandel >= grense)
+        return [
+          TILSTAND.SLAR_UT,
+          `${p0(d.egenLangtidsandel)} av dagsverkene er fravær over 16 dager, mot ${p0(d.bransjeLangtidsandel)} i bransjen. Grensen er ${p0(grense)}.`,
+        ];
+      return [
+        TILSTAND.SLAR_IKKE_UT,
+        `${p0(d.egenLangtidsandel)} langtid ligger ikke ${T.langtidAvvikPp} prosentpoeng over bransjen.`,
+      ];
     },
   },
 ];
 
-function pst(x) {
-  return `${Math.round(x * 100)} %`;
+function sikkerhet(valgt, d, T) {
+  if (!valgt) return null;
+  if (valgt.grunnlag !== "navtall") return "Middels";
+  return d.muligeDagsverk >= T.godSikkerhetMinDagsverk ? "God" : "Middels";
 }
 
-function beregnSikkerhet(i, ikkeVurdertAntall) {
-  let nivå = 0;
-  if (i.tilfellerTotalt >= 8) nivå = 1;
-  if (i.ansatte >= 20 && i.tilfellerTotalt >= 15) nivå = 2;
-  if (ikkeVurdertAntall >= 3) nivå = Math.max(0, nivå - 1);
-  return ["lav", "middels", "god"][nivå];
-}
-
-function kjørMotor(input, terskler) {
+export function kjorMotor(data, terskler) {
   const T = { ...STANDARDTERSKLER, ...terskler };
-  const a = avled(input);
+  const a = avled(data, T);
+
+  if (data.maskert) {
+    return {
+      maskert: true,
+      monster: "beredskap",
+      sikkerhet: null,
+      begrunnelse: [],
+      ogsaaUtslag: [],
+      utelukket: [],
+      ikkeVurdert: REGLER.map((r) => r.id),
+      sporsmaal: null,
+      tiltak: "tiltak_beredskap",
+      _vurderinger: REGLER.map((r) => ({
+        ...r,
+        tilstand: TILSTAND.IKKE_NOK_DATA,
+        forklaring: "Nav publiserer ikke tall for denne virksomheten.",
+      })),
+      _avledet: a,
+    };
+  }
 
   const vurderinger = REGLER.map((r) => {
-    const res = r.vurder(input, a, T);
-    return { id: r.id, navn: r.navn, prioritet: r.prioritet, ...res };
+    const [tilstand, forklaring] = r.vurder(data, a, T);
+    return { ...r, tilstand, forklaring };
   });
 
-  const utslag = vurderinger
-    .filter((v) => v.tilstand === TILSTAND.SLAR_UT)
-    .sort((x, y) => x.prioritet - y.prioritet);
+  const etter = (t) =>
+    vurderinger.filter((v) => v.tilstand === t).sort((x, y) => x.prioritet - y.prioritet);
 
-  const ikkeVurdert = vurderinger.filter(
-    (v) => v.tilstand === TILSTAND.IKKE_NOK_DATA
-  );
+  const utslag = etter(TILSTAND.SLAR_UT);
   const valgt = utslag[0] || null;
 
-  // Bare regler i tilstand SLAR_IKKE_UT kan brukes til å utelukke noe.
-  const utelukket = vurderinger.filter(
-    (v) => v.tilstand === TILSTAND.SLAR_IKKE_UT
+  // Fase 2: still bare spørsmål som kan endre det som vises.
+  const spm = etter(TILSTAND.TRENGER_SVAR).find(
+    (r) => !valgt || r.prioritet < valgt.prioritet
   );
 
-  const visningsmodus =
-    input.ansatte >= T.visningMinAnsatte &&
-    input.tilfellerTotalt >= T.visningMinTilfeller
-      ? "tall"
-      : "ord";
-
   return {
-    mønster: valgt ? valgt.id : "utilstrekkelig_data",
-    sikkerhet: valgt ? beregnSikkerhet(input, ikkeVurdert.length) : null,
+    maskert: false,
+    monster: valgt ? valgt.id : "ingen_utslag",
+    sikkerhet: sikkerhet(valgt, data, T),
     begrunnelse: valgt ? [valgt.forklaring] : [],
-    ogsåUtslag: utslag.slice(1).map((v) => v.id),
-    utelukket: utelukket.map((v) => v.id),
-    ikkeVurdert: ikkeVurdert.map((v) => v.id),
-    visningsmodus,
+    ogsaaUtslag: utslag.slice(1).map((v) => v.id),
+    utelukket: etter(TILSTAND.SLAR_IKKE_UT).map((v) => v.id),
+    ikkeVurdert: etter(TILSTAND.IKKE_NOK_DATA).map((v) => v.id),
+    sporsmaal: spm ? spm.id : null,
     tiltak: valgt ? `tiltak_${valgt.id}` : "tiltak_beredskap",
     _vurderinger: vurderinger,
     _avledet: a,
@@ -211,74 +186,125 @@ function kjørMotor(input, terskler) {
    SLUTT MOTOR
    ========================================================================= */
 
-/* Tekst som data. I et ekte prosjekt: innhold/tekster.nb.json */
+/* Tekst som data. Flyttes til innhold/tekster.nb.json. */
+
 const TEKST = {
-  mønster: {
-    enhetsklynge: {
-      tittel: "Fraværet er samlet i én del av bedriften",
-      brødtekst:
-        "Når fraværet klumper seg i én avdeling eller ett skiftlag, handler det oftest om arbeidsbelastning, bemanning eller nærmeste leder — ikke om de enkelte ansatte.",
+  monster: {
+    klynge: {
+      tittel: "Fraværet er samlet i én del av virksomheten",
+      brod: (d, a) =>
+        "Du oppgir at fraværet i hovedsak ligger i én rolle eller ett skiftlag. Når fraværet klumper seg slik, handler det oftere om arbeidsbelastning, bemanning eller nærmeste leder enn om de enkelte ansatte.",
+      tall: null,
     },
-    gjentakendeKorttid: {
-      tittel: "Gjentakende korttidsfravær hos få personer",
-      brødtekst:
-        "Noen få personer står bak en stor del av korttidsfraværet. Det peker mot oppfølging og dialog, ikke mot brede arbeidsmiljøtiltak.",
+    gjentakende: {
+      tittel: "Mye av fraværet er korte fravær",
+      brod: (d, a) =>
+        `${p0(a.egenKorttid)} av fraværsdagene deres kom fra fravær under 16 dager, mot ${p0(a.bransjeKorttid)} i bransjen. Du bekrefter at det er noen få som går igjen. Det peker mot oppfølging og dialog med dem det gjelder, ikke mot brede arbeidsmiljøtiltak.`,
+      tall: (d, a) => [
+        ["Korte fravær hos dere", p0(a.egenKorttid)],
+        ["I bransjen", p0(a.bransjeKorttid)],
+        ["Delvis arbeidet", p0(d.egenGradering)],
+      ],
     },
-    lavGradering: {
-      tittel: "Få er delvis sykmeldt",
-      brødtekst:
-        "Dere bruker gradert sykmelding mindre enn andre i bransjen. Delvis nærvær er ett av de få tiltakene med god dokumentert effekt.",
+    gradering: {
+      tittel: "Lite av fraværet deres blir delvis arbeidet",
+      brod: (d) =>
+        `${p0(d.egenGradering)} av fraværsdagene deres ble delvis arbeidet, mot ${p0(d.bransjeGradering)} i bransjen. Gradert sykmelding er ett av de få virkemidlene der forskningen peker i samme retning: folk kommer i gjennomsnitt raskere tilbake i full jobb.`,
+      tall: (d) => [
+        ["Delvis arbeidet", p0(d.egenGradering)],
+        ["I bransjen", p0(d.bransjeGradering)],
+        ["Fraværsdager i alt", Math.round(d.tapteDagsverk).toLocaleString("nb-NO")],
+      ],
     },
-    langtidUtenforJobb: {
+    langtid: {
       tittel: "Langvarige fravær dominerer bildet",
-      brødtekst:
-        "Det meste av fraværet er langvarig. Årsaken ligger ofte utenfor det arbeidsplassen kan påvirke, men tilbakeføringen ligger godt innenfor.",
+      brod: (d) =>
+        `${p0(d.egenLangtidsandel)} av fraværsdagene deres kom fra fravær som varte lenger enn 16 dager, mot ${p0(d.bransjeLangtidsandel)} i bransjen. Årsaken til langvarig fravær ligger ofte utenfor det arbeidsplassen kan påvirke — men tilbakeføringen ligger godt innenfor.`,
+      tall: (d) => [
+        ["Over 16 dager", p0(d.egenLangtidsandel)],
+        ["I bransjen", p0(d.bransjeLangtidsandel)],
+        ["Delvis arbeidet", p0(d.egenGradering)],
+      ],
     },
-    utilstrekkelig_data: {
-      tittel: "For lite data til å se et mønster",
-      brødtekst:
-        "Med så få ansatte og fraværstilfeller er svingningene tilfeldige. Ett langvarig fravær flytter fraværsprosenten kraftig uten at noe har endret seg hos dere.",
+    ingen_utslag: {
+      tittel: "Vi ser ingen tydelige mønstre i tallene deres",
+      brod: (d) =>
+        `Sykefraværet deres er ${p1(d.egenFravaersprosent)}, mot ${p1(d.bransjeFravaersprosent)} i bransjen. Fordelingen mellom korte og lange fravær, og hvor mye som blir delvis arbeidet, ligger nær bransjen ellers.`,
+      tall: (d) => [
+        ["Sykefravær hos dere", p1(d.egenFravaersprosent)],
+        ["I bransjen", p1(d.bransjeFravaersprosent)],
+        ["Fraværsdager i alt", Math.round(d.tapteDagsverk).toLocaleString("nb-NO")],
+      ],
+    },
+    beredskap: {
+      tittel: "Vi kan ikke vise tall for denne virksomheten",
+      brod: () =>
+        "Nav viser ikke sykefraværstall for virksomheter med få personer, fordi tallene da kan si noe om enkeltpersoner. Med så få ansatte er svingningene dessuten tilfeldige — ett langvarig fravær flytter fraværsprosenten kraftig uten at noe har endret seg hos dere.",
+      tall: null,
     },
   },
+
   utelukket: {
-    enhetsklynge:
-      "Du oppgir at fraværet ikke er samlet i én avdeling, rolle eller skiftlag.",
-    gjentakendeKorttid:
-      "Det er ikke noen få personer som står bak størstedelen av korttidsfraværet.",
-    lavGradering:
-      "Bruken av delvis sykmelding ligger ikke lavere enn i bransjen ellers.",
-    langtidUtenforJobb: "Fraværet er ikke dominert av langvarige tilfeller.",
+    klynge: "Du oppgir at fraværet ikke er samlet i én rolle eller ett skiftlag.",
+    gjentakende:
+      "Korte legemeldte fravær utgjør ikke en større del av fraværet deres enn i bransjen.",
+    gradering: "Andelen av fraværet som blir delvis arbeidet ligger ikke lavere enn i bransjen.",
+    langtid: "Langvarige fravær utgjør ikke en større del av fraværet deres enn i bransjen.",
   },
-  tiltak: {
-    tiltak_enhetsklynge: {
-      tittel: "Kartlegg arbeidsbelastningen i den ene enheten",
+
+  sporsmaal: {
+    klynge: {
+      tekst: "Er fraværet samlet i én rolle eller ett skiftlag?",
       hvorfor:
-        "Start med å snakke med enheten samlet, sammen med verneombudet. Arbeidsmiljøhjelpen har et opplegg tilpasset bransjen din.",
-      tid: ["20 min nå", "45 min om to uker", "15 min i uke 10"],
+        "Nav har bare tall for virksomheten samlet, og kan ikke se hvordan fraværet fordeler seg inne i den. Svaret ditt er det eneste grunnlaget vi kan ha for dette.",
     },
-    tiltak_gjentakendeKorttid: {
-      tittel: "Ta en samtale med hver av dem",
+    gjentakende: {
+      tekst: "Er det noen få som går igjen med korte fravær?",
+      hvorfor:
+        "Nav ser ikke egenmeldt fravær. Hvis dere har mange korte fravær som ikke er sykmeldt, er det bare du som vet det.",
+    },
+  },
+
+  tiltak: {
+    tiltak_klynge: {
+      tittel: "Snakk med den delen det gjelder, samlet",
+      hvorfor:
+        "Ta det med gruppen og verneombudet i samme rom, ikke én og én. Arbeidsmiljøhjelpen har et opplegg tilpasset bransjen deres.",
+      tid: ["20 min nå", "45 min om to uker", "15 min i uke 10"],
+      knapp: "Forbered møtet",
+    },
+    tiltak_gjentakende: {
+      tittel: "Ta en samtale med hver av dem det gjelder",
       hvorfor:
         "Ikke om fraværet i seg selv, men om hva som gjør det vanskelig å stå i jobben. Du får forslag til åpningsspørsmål og en oversikt over hva du ikke har lov til å spørre om.",
       tid: ["10 min nå", "15 min om to uker", "5 min i uke 8"],
+      knapp: "Forbered samtalen",
     },
-    tiltak_lavGradering: {
+    tiltak_gradering: {
       tittel: "Se på hva folk kan gjøre, ikke hva de ikke kan",
       hvorfor:
         "Neste gang noen sykmeldes: kartlegg arbeidsoppgavene som fortsatt går an. Nav kan dekke tilrettelegging gjennom tilretteleggingstilskudd.",
       tid: ["15 min nå", "10 min per ny sykmelding"],
+      knapp: "Sett i gang",
     },
-    tiltak_langtidUtenforJobb: {
+    tiltak_langtid: {
       tittel: "Hold kontakten mens de er borte",
       hvorfor:
         "Jevn, lav kontakt gjør tilbakeføringen kortere. Du trenger ikke vite hva de feiler for å planlegge hva de skal komme tilbake til.",
       tid: ["10 min nå", "10 min hver tredje uke"],
+      knapp: "Sett i gang",
     },
     tiltak_beredskap: {
       tittel: "Gjør deg klar til neste sykmelding",
       hvorfor:
-        "Det mest lønnsomme du kan gjøre nå er å slå på varsler, slik at du får beskjed om oppfølgingsplan og dialogmøte når det først skjer noe.",
+        "Det mest lønnsomme du kan gjøre nå er å slå på varsler. Da får du beskjed om fristene når det først skjer noe, i stedet for å måtte finne ut av reglene midt i en travel uke.",
       tid: ["5 min nå", "Så ingenting før det trengs"],
+      knapp: "Slå på varsler",
+      frister: [
+        ["4 uker", "Oppfølgingsplan skal være klar og sendt til den som har sykmeldt"],
+        ["7 uker", "Du skal kalle inn til dialogmøte"],
+        ["26 uker", "Nav kaller inn til dialogmøte 2"],
+      ],
     },
   },
 };
@@ -286,81 +312,80 @@ const TEKST = {
 const SCENARIER = {
   bakeriet: {
     navn: "Bakeriet AS",
-    input: {
-      ansatte: 9,
-      tilfellerTotalt: 19,
-      tilfellerLangtid: 2,
-      sykmeldtePersoner: 3,
-      personerMedGjentakelse: 2,
-      tilfellerFraGjentakere: 14,
-      graderteSykmeldte: 0,
-      enhetskonsentrasjon: "nei",
-      bransjeGradering: 55,
+    data: {
+      maskert: false,
+      egenFravaersprosent: 7.4,
+      bransjeFravaersprosent: 6.1,
+      egenLangtidsandel: 78,
+      bransjeLangtidsandel: 88,
+      egenGradering: 21,
+      bransjeGradering: 24,
+      tapteDagsverk: 310,
+      muligeDagsverk: 4200,
+      klyngeSvar: "ubesvart",
+      gjentakelseSvar: "ubesvart",
+    },
+  },
+  fjordbo: {
+    navn: "Fjordbo Omsorg AS",
+    data: {
+      maskert: false,
+      egenFravaersprosent: 9.2,
+      bransjeFravaersprosent: 8.1,
+      egenLangtidsandel: 72,
+      bransjeLangtidsandel: 68,
+      egenGradering: 9,
+      bransjeGradering: 24,
+      tapteDagsverk: 1180,
+      muligeDagsverk: 12800,
+      klyngeSvar: "ubesvart",
+      gjentakelseSvar: "ubesvart",
+    },
+  },
+  solsiden: {
+    navn: "Solsiden barnehage",
+    data: {
+      maskert: false,
+      egenFravaersprosent: 7.2,
+      bransjeFravaersprosent: 6.4,
+      egenLangtidsandel: 81,
+      bransjeLangtidsandel: 68,
+      egenGradering: 22,
+      bransjeGradering: 24,
+      tapteDagsverk: 640,
+      muligeDagsverk: 6900,
+      klyngeSvar: "ubesvart",
+      gjentakelseSvar: "ubesvart",
     },
   },
   nordvik: {
     navn: "Nordvik Rør AS",
-    input: {
-      ansatte: 6,
-      tilfellerTotalt: 3,
-      tilfellerLangtid: 1,
-      sykmeldtePersoner: 2,
-      personerMedGjentakelse: 0,
-      tilfellerFraGjentakere: 0,
-      graderteSykmeldte: 0,
-      enhetskonsentrasjon: "vetIkke",
-      bransjeGradering: 60,
-    },
-  },
-  industri: {
-    navn: "Vestland Industri AS",
-    input: {
-      ansatte: 200,
-      tilfellerTotalt: 140,
-      tilfellerLangtid: 34,
-      sykmeldtePersoner: 48,
-      personerMedGjentakelse: 9,
-      tilfellerFraGjentakere: 30,
-      graderteSykmeldte: 12,
-      enhetskonsentrasjon: "ja",
-      bransjeGradering: 62,
+    data: {
+      maskert: true,
+      egenFravaersprosent: 0,
+      bransjeFravaersprosent: 5.4,
+      egenLangtidsandel: 0,
+      bransjeLangtidsandel: 74,
+      egenGradering: 0,
+      bransjeGradering: 28,
+      tapteDagsverk: 0,
+      muligeDagsverk: 1380,
+      klyngeSvar: "ubesvart",
+      gjentakelseSvar: "ubesvart",
     },
   },
 };
 
-/* ------------------------------- Farger ---------------------------------- */
-const C = {
-  blå: "#0067C5",
-  blåMørk: "#00459E",
-  blåLys: "#E6F0FF",
-  blekk: "#23262A",
-  grå: "#5B6270",
-  kantLys: "#DDE1E6",
-  flate: "#FFFFFF",
-  side: "#F4F5F6",
-  konsoll: "#16181D",
-  konsollFlate: "#1F232A",
-  konsollKant: "#2E343D",
-  konsollTekst: "#C7CDD6",
-  konsollDempet: "#7C8492",
-  utslag: "#4FD48A",
-  ikkeUtslag: "#8891A0",
-  mangler: "#FFB35C",
-};
+/* ---------------------------- Delkomponenter ----------------------------- */
 
-const SANS = '"Source Sans 3","Source Sans Pro",system-ui,sans-serif';
-const MONO = 'ui-monospace,SFMono-Regular,"IBM Plex Mono",Menlo,monospace';
-
-/* ------------------------------ Konsoll ---------------------------------- */
-
-function Skyv({ etikett, verdi, min, max, steg = 1, onChange, suffiks }) {
+function Skyv({ etikett, verdi, min, max, steg = 1, suffiks = "", onChange }) {
   return (
-    <div className="mb-3">
-      <div className="flex justify-between items-baseline mb-1">
-        <span style={{ color: C.konsollTekst, fontSize: 12 }}>{etikett}</span>
-        <span style={{ color: C.utslag, fontFamily: MONO, fontSize: 12 }}>
+    <div className="skyv">
+      <div className="skyv__rad">
+        <span className="skyv__etikett">{etikett}</span>
+        <span className="skyv__verdi">
           {verdi}
-          {suffiks || ""}
+          {suffiks}
         </span>
       </div>
       <input
@@ -370,251 +395,188 @@ function Skyv({ etikett, verdi, min, max, steg = 1, onChange, suffiks }) {
         step={steg}
         value={verdi}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full"
-        style={{ accentColor: C.blå }}
       />
     </div>
   );
 }
 
-function TilstandsMerke({ tilstand }) {
-  const kart = {
-    SLAR_UT: { t: "SLÅR UT", f: C.utslag },
-    SLAR_IKKE_UT: { t: "SLÅR IKKE UT", f: C.ikkeUtslag },
-    IKKE_NOK_DATA: { t: "IKKE NOK DATA", f: C.mangler },
-  };
-  const k = kart[tilstand];
+function Svarvalg({ etikett, verdi, onChange }) {
+  const valg = [
+    ["ubesvart", "Ubesvart"],
+    ["ja", "Ja"],
+    ["nei", "Nei"],
+    ["vetIkke", "Vet ikke"],
+  ];
   return (
-    <span
-      style={{
-        fontFamily: MONO,
-        fontSize: 10,
-        letterSpacing: "0.06em",
-        color: k.f,
-        border: `1px solid ${k.f}`,
-        borderRadius: 3,
-        padding: "2px 6px",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {k.t}
-    </span>
-  );
-}
-
-/* --------------------------- Tjenesteskjerm ------------------------------ */
-
-function Nøkkeltall({ etikett, verdi }) {
-  return (
-    <div
-      className="p-4"
-      style={{ background: C.side, borderRadius: 6, minWidth: 0 }}
-    >
-      <div style={{ fontSize: 13, color: C.grå, marginBottom: 4 }}>
-        {etikett}
+    <div className="skyv">
+      <div className="skyv__rad">
+        <span className="skyv__etikett">{etikett}</span>
       </div>
-      <div style={{ fontSize: 24, fontWeight: 600, color: C.blekk }}>
-        {verdi}
+      <div className="valg">
+        {valg.map(([v, l]) => (
+          <button
+            key={v}
+            className={"valg__knapp" + (verdi === v ? " valg__knapp--valgt" : "")}
+            onClick={() => onChange(v)}
+          >
+            {l}
+          </button>
+        ))}
       </div>
     </div>
   );
 }
 
-function TjenesteSkjerm({ input, ut, virksomhet }) {
-  const m = TEKST.mønster[ut.mønster];
+function Merke({ tilstand }) {
+  const tekst = {
+    SLAR_UT: "SLÅR UT",
+    SLAR_IKKE_UT: "SLÅR IKKE UT",
+    IKKE_NOK_DATA: "IKKE NOK DATA",
+    TRENGER_SVAR: "TRENGER SVAR",
+  }[tilstand];
+  return <span className={`merke merke--${tilstand}`}>{tekst}</span>;
+}
+
+function Tiltakskort({ tiltak, ingentingHaster, onSvar }) {
+  return (
+    <div className="kort kort--tiltak">
+      <span className="tagg tagg--aksent">
+        {ingentingHaster ? "Ingenting haster" : "Én ting nå"}
+      </span>
+      <p className="tiltak__tittel">{tiltak.tittel}</p>
+      <p className="brodtekst">{tiltak.hvorfor}</p>
+
+      {tiltak.frister && (
+        <div className="liste">
+          {tiltak.frister.map(([naar, hva]) => (
+            <p className="liste__rad" key={naar}>
+              <strong>{naar}</strong> · {hva}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="tid" style={{ marginTop: tiltak.frister ? 16 : 0 }}>
+        {tiltak.tid.map((t) => (
+          <span className="tid__brikke" key={t}>
+            {t}
+          </span>
+        ))}
+      </div>
+
+      <div className="knapper">
+        <button className="knapp">{tiltak.knapp}</button>
+        <button className="knapp knapp--sekundar" onClick={onSvar}>
+          Hvorfor akkurat dette?
+        </button>
+      </div>
+      <p className="fotnote">Vi ser på dette igjen når neste kvartal er publisert.</p>
+    </div>
+  );
+}
+
+function Skjerm({ navn, data, ut, onSvar }) {
+  const m = TEKST.monster[ut.monster];
   const tiltak = TEKST.tiltak[ut.tiltak];
   const a = ut._avledet;
 
-  const utelukketSetninger = ut.utelukket
-    .filter((id) => id !== ut.mønster)
-    .map((id) => TEKST.utelukket[id]);
+  // Maks én utelukkingssetning, og aldri fra mønsteret som vises.
+  const negId = ut.utelukket.filter((id) => id !== ut.monster)[0];
+  const neg = negId ? TEKST.utelukket[negId] : null;
+
+  const tall = m.tall ? m.tall(data, a) : null;
+  const spm = ut.sporsmaal ? TEKST.sporsmaal[ut.sporsmaal] : null;
 
   return (
-    <div
-      style={{
-        background: C.flate,
-        border: `1px solid ${C.kantLys}`,
-        borderRadius: 8,
-        fontFamily: SANS,
-        color: C.blekk,
-      }}
-      className="p-5"
-    >
-      <div className="flex justify-between items-baseline mb-4 flex-wrap gap-2">
-        <span style={{ fontSize: 13, color: C.grå }}>
-          {virksomhet} · {input.ansatte} ansatte
-        </span>
-        <span style={{ fontSize: 13, color: C.grå }}>Oppdatert i dag</span>
-      </div>
-
-      <div
-        className="p-5 mb-3"
-        style={{ background: C.flate, border: `1px solid ${C.kantLys}`, borderRadius: 8 }}
-      >
-        <div style={{ fontSize: 13, color: C.grå, marginBottom: 6 }}>
-          Fraværsbildet ditt
+    <div>
+      <div className="kort">
+        <div className="kort__hode">
+          <span>{navn}</span>
+          <span>Til og med 2. kvartal</span>
         </div>
-        <h2
-          style={{
-            fontSize: 22,
-            fontWeight: 600,
-            lineHeight: 1.3,
-            margin: "0 0 8px",
-          }}
-        >
-          {m.tittel}
-        </h2>
-        <p style={{ fontSize: 15, color: C.grå, lineHeight: 1.6, margin: 0 }}>
-          {m.brødtekst}
-        </p>
 
-        {utelukketSetninger.length > 0 && (
-          <p
-            style={{
-              fontSize: 15,
-              color: C.grå,
-              lineHeight: 1.6,
-              margin: "10px 0 0",
-            }}
-          >
-            {utelukketSetninger.join(" ")}
+        {ut.sikkerhet && <span className="tagg">Treffsikkerhet: {ut.sikkerhet}</span>}
+
+        <p className="etikett">Fraværsbildet ditt</p>
+        <h2 className="overskrift">{m.tittel}</h2>
+        <p className={"brodtekst" + (neg ? "" : " brodtekst--sist")}>{m.brod(data, a)}</p>
+        {neg && <p className="brodtekst brodtekst--sist">{neg}</p>}
+
+        {ut.maskert && (
+          <p className="brodtekst brodtekst--sist" style={{ marginTop: 10 }}>
+            Det betyr ikke at det ikke er noe å gjøre. Det betyr at analyse ikke er det som
+            hjelper dere.
           </p>
         )}
 
-        {ut.visningsmodus === "tall" ? (
-          <div className="grid grid-cols-3 gap-3 mt-5">
-            <Nøkkeltall etikett="Fraværstilfeller" verdi={input.tilfellerTotalt} />
-            <Nøkkeltall
-              etikett="Konsentrasjon"
-              verdi={`${input.personerMedGjentakelse} av ${input.ansatte}`}
-            />
-            <Nøkkeltall
-              etikett="Sikkerhet"
-              verdi={
-                ut.sikkerhet
-                  ? ut.sikkerhet[0].toUpperCase() + ut.sikkerhet.slice(1)
-                  : "—"
-              }
-            />
+        {tall && (
+          <div className="tall">
+            {tall.map(([etikett, verdi]) => (
+              <div className="tall__kort" key={etikett}>
+                <p className="tall__etikett">{etikett}</p>
+                <p className="tall__verdi">{verdi}</p>
+              </div>
+            ))}
           </div>
-        ) : (
-          <div className="mt-5">
-            <div style={{ fontSize: 13, color: C.grå, marginBottom: 4 }}>
-              Det vi ser
-            </div>
-            <div style={{ borderTop: `1px solid ${C.kantLys}` }}>
-              {[
-                `${input.tilfellerTotalt} fraværstilfeller det siste året`,
-                input.tilfellerLangtid === 1
-                  ? "Ett av dem varte lenger enn 16 dager"
-                  : `${input.tilfellerLangtid} av dem varte lenger enn 16 dager`,
-                input.enhetskonsentrasjon === "ja"
-                  ? "Du oppgir at fraværet er samlet i én del av bedriften"
-                  : "Ingen rolle eller del av bedriften peker seg ut",
-              ].map((s, k) => (
-                <p
-                  key={k}
-                  style={{
-                    fontSize: 15,
-                    margin: 0,
-                    padding: "10px 0",
-                    borderBottom: `1px solid ${C.kantLys}`,
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {s}
-                </p>
-              ))}
-            </div>
-            <p
-              style={{
-                fontSize: 13,
-                color: C.grå,
-                margin: "14px 0 0",
-                lineHeight: 1.6,
-              }}
-            >
-              Vi viser ikke prosent eller bransjesammenligning her. Med så få
-              tilfeller ville tallene sagt mer om tilfeldigheter enn om
-              bedriften din.
+        )}
+
+        {ut.monster === "klynge" && (
+          <div className="boks">
+            <p className="etikett" style={{ marginBottom: 6 }}>
+              Grunnlag
+            </p>
+            <p className="boks__tekst">
+              Dette mønsteret bygger på din egen vurdering, ikke på tall fra Nav. Derfor er
+              treffsikkerheten aldri høyere enn middels.
+            </p>
+            <p className="hjelpetekst">
+              Bakgrunn: sykefraværet samlet er {p1(data.egenFravaersprosent)}, mot{" "}
+              {p1(data.bransjeFravaersprosent)} i bransjen.
             </p>
           </div>
         )}
 
-        <p
-          style={{
-            fontSize: 13,
-            color: C.grå,
-            margin: "14px 0 0",
-            lineHeight: 1.6,
-          }}
-        >
-          Tallene er hentet fra sykmeldingene Nav allerede har. Ingenting du
-          legger inn her deles med saksbehandler.
-        </p>
+        {spm && (
+          <div className="boks">
+            <p className="etikett" style={{ marginBottom: 6 }}>
+              Ett spørsmål til deg
+            </p>
+            <p className="boks__tekst" style={{ marginBottom: 10 }}>
+              {spm.tekst}
+            </p>
+            <p className="hjelpetekst" style={{ margin: "0 0 12px" }}>
+              {spm.hvorfor}
+            </p>
+            <div className="knapper">
+              <button className="knapp" onClick={() => onSvar(ut.sporsmaal, "ja")}>
+                Ja
+              </button>
+              <button className="knapp knapp--sekundar" onClick={() => onSvar(ut.sporsmaal, "nei")}>
+                Nei
+              </button>
+              <button
+                className="knapp knapp--sekundar"
+                onClick={() => onSvar(ut.sporsmaal, "vetIkke")}
+              >
+                Vet ikke
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      <div
-        className="p-5"
-        style={{ border: `2px solid ${C.blå}`, borderRadius: 8 }}
-      >
-        <span
-          style={{
-            display: "inline-block",
-            background: C.blåLys,
-            color: C.blåMørk,
-            fontSize: 12,
-            padding: "4px 12px",
-            borderRadius: 4,
-            marginBottom: 10,
-          }}
-        >
-          {ut.mønster === "utilstrekkelig_data" ? "Ingenting haster" : "Én ting nå"}
-        </span>
-        <h3 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 6px" }}>
-          {tiltak.tittel}
-        </h3>
-        <p
-          style={{
-            fontSize: 15,
-            color: C.grå,
-            lineHeight: 1.6,
-            margin: "0 0 16px",
-          }}
-        >
-          {tiltak.hvorfor}
+      <Tiltakskort
+        tiltak={tiltak}
+        ingentingHaster={ut.monster === "beredskap" || ut.monster === "ingen_utslag"}
+        onSvar={() => {}}
+      />
+
+      {ut.ogsaaUtslag.length > 0 && (
+        <p className="hjelpetekst">
+          Skjult av prioritetsrekkefølgen:{" "}
+          {ut.ogsaaUtslag.map((id) => TEKST.monster[id].tittel.toLowerCase()).join(", ")}.
         </p>
-        <div className="flex flex-wrap gap-2 mb-4">
-          {tiltak.tid.map((t) => (
-            <span
-              key={t}
-              style={{
-                fontSize: 13,
-                border: `1px solid ${C.kantLys}`,
-                borderRadius: 4,
-                padding: "5px 10px",
-                color: C.grå,
-              }}
-            >
-              {t}
-            </span>
-          ))}
-        </div>
-        <button
-          style={{
-            background: C.blå,
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            padding: "8px 16px",
-            fontSize: 15,
-            fontFamily: SANS,
-            cursor: "pointer",
-          }}
-        >
-          {ut.mønster === "utilstrekkelig_data" ? "Slå på varsler" : "Sett i gang"}
-        </button>
-      </div>
+      )}
     </div>
   );
 }
@@ -622,56 +584,38 @@ function TjenesteSkjerm({ input, ut, virksomhet }) {
 /* --------------------------------- App ----------------------------------- */
 
 export default function Regelmotor() {
-  const [scenario, setScenario] = useState("bakeriet");
-  const [input, setInput] = useState(SCENARIER.bakeriet.input);
+  const [scenario, setScenario] = useState("fjordbo");
+  const [data, setData] = useState(SCENARIER.fjordbo.data);
   const [T, setT] = useState(STANDARDTERSKLER);
   const [visTerskler, setVisTerskler] = useState(false);
-  const [visRegeltilstander, setVisRegeltilstander] = useState(false);
-  const [visDatakontrakt, setVisDatakontrakt] = useState(false);
 
-  const ut = useMemo(() => kjørMotor(input, T), [input, T]);
+  const ut = useMemo(() => kjorMotor(data, T), [data, T]);
 
-  const settScenario = (k) => {
+  const bytt = (k) => {
     setScenario(k);
-    setInput(SCENARIER[k].input);
+    setData({ ...SCENARIER[k].data });
   };
-  const endre = (felt) => (v) => setInput((p) => ({ ...p, [felt]: v }));
+  const endre = (felt) => (v) => setData((p) => ({ ...p, [felt]: v }));
+  const svar = (regelId, verdi) =>
+    setData((p) => ({
+      ...p,
+      [regelId === "klynge" ? "klyngeSvar" : "gjentakelseSvar"]: verdi,
+    }));
 
   return (
-    <div
-      style={{ fontFamily: SANS, background: C.side, minHeight: "100%" }}
-      className="p-4"
-    >
-      <div className="mb-4">
-        <h1
-          style={{
-            fontSize: 20,
-            fontWeight: 600,
-            color: C.blekk,
-            margin: "0 0 4px",
-          }}
-        >
-          Regelmotor — fase 1
-        </h1>
-        <p style={{ fontSize: 14, color: C.grå, margin: "0 0 12px" }}>
-          Åtte tall inn, fire regler med tre tilstander hver, ett mønster ut.
-          Ingen KI.
+    <div className="app">
+      <div className="app__topp">
+        <h1 className="app__tittel">Fraværsbildet — regelmotor</h1>
+        <p className="app__ingress">
+          Reglene kjører på Navs egne tall. Arbeidsgiveren svarer på maks ett spørsmål, og bare
+          når svaret kan endre utfallet.
         </p>
-        <div className="flex flex-wrap gap-2">
+        <div className="scenarier">
           {Object.entries(SCENARIER).map(([k, s]) => (
             <button
               key={k}
-              onClick={() => settScenario(k)}
-              style={{
-                fontSize: 14,
-                padding: "6px 14px",
-                borderRadius: 4,
-                cursor: "pointer",
-                fontFamily: SANS,
-                border: `1px solid ${scenario === k ? C.blå : C.kantLys}`,
-                background: scenario === k ? C.blå : C.flate,
-                color: scenario === k ? "#fff" : C.blekk,
-              }}
+              className={"scenario" + (scenario === k ? " scenario--valgt" : "")}
+              onClick={() => bytt(k)}
             >
               {s.navn}
             </button>
@@ -679,266 +623,182 @@ export default function Regelmotor() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-        {/* Konsoll */}
-        <div
-          className="lg:col-span-2 p-4"
-          style={{ background: C.konsoll, borderRadius: 8 }}
-        >
-          <div
-            style={{
-              fontFamily: MONO,
-              fontSize: 11,
-              letterSpacing: "0.08em",
-              color: C.konsollDempet,
-              marginBottom: 14,
-            }}
-          >
-            INNDATA FRA ARBEIDSGIVER
+      <div className="app__grid">
+        <div className="konsoll">
+          <div className="konsoll__bolk konsoll__bolk--forst">DATA FRA NAV</div>
+          <Skyv
+            etikett="Maskert (for få personer)"
+            verdi={data.maskert ? 1 : 0}
+            min={0}
+            max={1}
+            onChange={(v) => endre("maskert")(v === 1)}
+          />
+          <Skyv
+            etikett="Sykefravær, egen"
+            verdi={data.egenFravaersprosent}
+            min={0}
+            max={25}
+            steg={0.1}
+            suffiks=" %"
+            onChange={endre("egenFravaersprosent")}
+          />
+          <Skyv
+            etikett="Sykefravær, bransje"
+            verdi={data.bransjeFravaersprosent}
+            min={0}
+            max={25}
+            steg={0.1}
+            suffiks=" %"
+            onChange={endre("bransjeFravaersprosent")}
+          />
+          <Skyv
+            etikett="Langtidsandel, egen"
+            verdi={data.egenLangtidsandel}
+            min={0}
+            max={100}
+            suffiks=" %"
+            onChange={endre("egenLangtidsandel")}
+          />
+          <Skyv
+            etikett="Langtidsandel, bransje"
+            verdi={data.bransjeLangtidsandel}
+            min={0}
+            max={100}
+            suffiks=" %"
+            onChange={endre("bransjeLangtidsandel")}
+          />
+          <Skyv
+            etikett="Gradering, egen"
+            verdi={data.egenGradering}
+            min={0}
+            max={100}
+            suffiks=" %"
+            onChange={endre("egenGradering")}
+          />
+          <Skyv
+            etikett="Gradering, bransje"
+            verdi={data.bransjeGradering}
+            min={0}
+            max={100}
+            suffiks=" %"
+            onChange={endre("bransjeGradering")}
+          />
+          <Skyv
+            etikett="Tapte dagsverk"
+            verdi={data.tapteDagsverk}
+            min={0}
+            max={5000}
+            steg={10}
+            onChange={endre("tapteDagsverk")}
+          />
+          <Skyv
+            etikett="Mulige dagsverk"
+            verdi={data.muligeDagsverk}
+            min={200}
+            max={60000}
+            steg={100}
+            onChange={endre("muligeDagsverk")}
+          />
+
+          <div className="konsoll__bolk">
+            SVAR FRA ARBEIDSGIVER · {ut._avledet.aarsverk.toFixed(0)} ÅRSVERK
           </div>
+          <Svarvalg
+            etikett="Samlet i én rolle eller skift?"
+            verdi={data.klyngeSvar}
+            onChange={endre("klyngeSvar")}
+          />
+          <Svarvalg
+            etikett="Noen få som går igjen?"
+            verdi={data.gjentakelseSvar}
+            onChange={endre("gjentakelseSvar")}
+          />
 
-          <Skyv etikett="Ansatte" verdi={input.ansatte} min={1} max={300} onChange={endre("ansatte")} />
-          <Skyv etikett="Fraværstilfeller siste 12 mnd" verdi={input.tilfellerTotalt} min={0} max={200} onChange={endre("tilfellerTotalt")} />
-          <Skyv etikett="Av disse over 16 dager" verdi={input.tilfellerLangtid} min={0} max={Math.max(1, input.tilfellerTotalt)} onChange={endre("tilfellerLangtid")} />
-          <Skyv etikett="Personer med legemeldt fravær" verdi={input.sykmeldtePersoner} min={0} max={Math.max(1, input.ansatte)} onChange={endre("sykmeldtePersoner")} />
-          <Skyv etikett="Av disse delvis sykmeldt" verdi={input.graderteSykmeldte} min={0} max={Math.max(1, input.sykmeldtePersoner)} onChange={endre("graderteSykmeldte")} />
-          <Skyv etikett="Personer med 4+ korttidsfravær" verdi={input.personerMedGjentakelse} min={0} max={Math.max(1, input.ansatte)} onChange={endre("personerMedGjentakelse")} />
-          <Skyv etikett="Korttidstilfeller hos disse" verdi={input.tilfellerFraGjentakere} min={0} max={Math.max(1, input.tilfellerTotalt)} onChange={endre("tilfellerFraGjentakere")} />
-
-          <div className="mb-3">
-            <div style={{ color: C.konsollTekst, fontSize: 12, marginBottom: 6 }}>
-              Samlet i én avdeling, rolle eller skift?
-            </div>
-            <div className="flex gap-2">
-              {[
-                ["ja", "Ja"],
-                ["nei", "Nei"],
-                ["vetIkke", "Vet ikke"],
-              ].map(([v, l]) => (
-                <button
-                  key={v}
-                  onClick={() => endre("enhetskonsentrasjon")(v)}
-                  style={{
-                    fontFamily: MONO,
-                    fontSize: 11,
-                    padding: "4px 10px",
-                    borderRadius: 3,
-                    cursor: "pointer",
-                    border: `1px solid ${input.enhetskonsentrasjon === v ? C.utslag : C.konsollKant}`,
-                    background: "transparent",
-                    color: input.enhetskonsentrasjon === v ? C.utslag : C.konsollDempet,
-                  }}
-                >
-                  {l}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div
-            style={{
-              fontFamily: MONO,
-              fontSize: 11,
-              letterSpacing: "0.08em",
-              color: C.konsollDempet,
-              margin: "20px 0 10px",
-              paddingTop: 14,
-              borderTop: `1px solid ${C.konsollKant}`,
-            }}
-          >
-            NAV-DATA
-          </div>
-          <Skyv etikett="Graderingsandel i bransjen" verdi={input.bransjeGradering} min={0} max={100} suffiks=" %" onChange={endre("bransjeGradering")} />
-
-          <button
-            onClick={() => setVisTerskler(!visTerskler)}
-            style={{
-              fontFamily: MONO,
-              fontSize: 11,
-              letterSpacing: "0.08em",
-              color: C.konsollDempet,
-              background: "transparent",
-              border: "none",
-              padding: "14px 0 10px",
-              cursor: "pointer",
-              borderTop: `1px solid ${C.konsollKant}`,
-              width: "100%",
-              textAlign: "left",
-              marginTop: 20,
-            }}
-          >
+          <button className="konsoll__knapp" onClick={() => setVisTerskler(!visTerskler)}>
             {visTerskler ? "▾" : "▸"} TERSKLER
           </button>
-
           {visTerskler && (
             <div>
-              <div style={{ color: C.mangler, fontFamily: MONO, fontSize: 10, marginBottom: 8 }}>
-                VISNINGSTERSKEL
-              </div>
-              <Skyv etikett="Min. ansatte for å vise tall" verdi={T.visningMinAnsatte} min={1} max={30} onChange={(v) => setT({ ...T, visningMinAnsatte: v })} />
-              <Skyv etikett="Min. tilfeller for å vise tall" verdi={T.visningMinTilfeller} min={1} max={30} onChange={(v) => setT({ ...T, visningMinTilfeller: v })} />
-              <div style={{ color: C.mangler, fontFamily: MONO, fontSize: 10, margin: "14px 0 8px" }}>
-                MØNSTERTERSKLER
-              </div>
-              <Skyv etikett="Enhetsklynge: min. ansatte" verdi={T.enhetMinAnsatte} min={2} max={100} onChange={(v) => setT({ ...T, enhetMinAnsatte: v })} />
-              <Skyv etikett="Gjentakelse: min. korttidstilfeller" verdi={T.gjentakMinKorttid} min={1} max={40} onChange={(v) => setT({ ...T, gjentakMinKorttid: v })} />
-              <Skyv etikett="Gjentakelse: andel av korttid" verdi={Math.round(T.gjentakAndelAvKorttid * 100)} min={10} max={100} suffiks=" %" onChange={(v) => setT({ ...T, gjentakAndelAvKorttid: v / 100 })} />
-              <Skyv etikett="Gjentakelse: maks andel av ansatte" verdi={Math.round(T.gjentakMaksAndelAnsatte * 100)} min={5} max={100} suffiks=" %" onChange={(v) => setT({ ...T, gjentakMaksAndelAnsatte: v / 100 })} />
-              <Skyv etikett="Gradering: min. nevner" verdi={T.graderingMinNevner} min={1} max={30} onChange={(v) => setT({ ...T, graderingMinNevner: v })} />
-              <Skyv etikett="Gradering: avvik fra bransje" verdi={T.graderingAvvikProsentpoeng} min={1} max={60} suffiks=" pp" onChange={(v) => setT({ ...T, graderingAvvikProsentpoeng: v })} />
-              <Skyv etikett="Langtid: min. tilfeller" verdi={T.langtidMinTilfeller} min={1} max={30} onChange={(v) => setT({ ...T, langtidMinTilfeller: v })} />
-              <Skyv etikett="Langtid: min. andel av tilfeller" verdi={Math.round(T.langtidMinAndel * 100)} min={10} max={100} suffiks=" %" onChange={(v) => setT({ ...T, langtidMinAndel: v / 100 })} />
-              <button
-                onClick={() => setT(STANDARDTERSKLER)}
-                style={{
-                  fontFamily: MONO,
-                  fontSize: 11,
-                  color: C.konsollDempet,
-                  background: "transparent",
-                  border: `1px solid ${C.konsollKant}`,
-                  borderRadius: 3,
-                  padding: "5px 10px",
-                  cursor: "pointer",
-                  marginTop: 6,
-                }}
-              >
-                Tilbakestill
-              </button>
+              <Skyv
+                etikett="Klynge: min. årsverk"
+                verdi={T.klyngeMinAarsverk}
+                min={2}
+                max={100}
+                onChange={(v) => setT({ ...T, klyngeMinAarsverk: v })}
+              />
+              <Skyv
+                etikett="Gjentakelse: screeningfaktor"
+                verdi={T.gjentakScreeningFaktor}
+                min={1}
+                max={4}
+                steg={0.1}
+                suffiks="×"
+                onChange={(v) => setT({ ...T, gjentakScreeningFaktor: v })}
+              />
+              <Skyv
+                etikett="Gradering: andel av bransje"
+                verdi={Math.round(T.graderingFaktor * 100)}
+                min={10}
+                max={100}
+                suffiks=" %"
+                onChange={(v) => setT({ ...T, graderingFaktor: v / 100 })}
+              />
+              <Skyv
+                etikett="Langtid: avvik fra bransje"
+                verdi={T.langtidAvvikPp}
+                min={1}
+                max={40}
+                suffiks=" pp"
+                onChange={(v) => setT({ ...T, langtidAvvikPp: v })}
+              />
+              <Skyv
+                etikett="God sikkerhet: min. dagsverk"
+                verdi={T.godSikkerhetMinDagsverk}
+                min={100}
+                max={10000}
+                steg={100}
+                onChange={(v) => setT({ ...T, godSikkerhetMinDagsverk: v })}
+              />
             </div>
           )}
 
-          <button
-            onClick={() => setVisRegeltilstander(!visRegeltilstander)}
-            style={{
-              fontFamily: MONO,
-              fontSize: 11,
-              letterSpacing: "0.08em",
-              color: C.konsollDempet,
-              background: "transparent",
-              border: "none",
-              padding: "14px 0 10px",
-              cursor: "pointer",
-              borderTop: `1px solid ${C.konsollKant}`,
-              width: "100%",
-              textAlign: "left",
-              marginTop: 20,
-            }}
-          >
-            {visRegeltilstander ? "▾" : "▸"} REGELTILSTANDER
-          </button>
-
-          {visRegeltilstander && (
-            <div>
-              {ut._vurderinger.map((v) => (
-                <div
-                  key={v.id}
-                  className="p-3 mb-2"
-                  style={{
-                    background: C.konsollFlate,
-                    borderRadius: 4,
-                    borderLeft: `2px solid ${
-                      v.tilstand === "SLAR_UT"
-                        ? C.utslag
-                        : v.tilstand === "IKKE_NOK_DATA"
-                        ? C.mangler
-                        : C.konsollKant
-                    }`,
-                  }}
-                >
-                  <div className="flex justify-between items-start gap-2 mb-1 flex-wrap">
-                    <span style={{ fontSize: 13, color: C.konsollTekst, fontWeight: 600 }}>
-                      {v.prioritet}. {v.navn}
-                    </span>
-                    <TilstandsMerke tilstand={v.tilstand} />
-                  </div>
-                  <p
-                    style={{
-                      fontFamily: MONO,
-                      fontSize: 11,
-                      color: C.konsollDempet,
-                      margin: 0,
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    {v.forklaring}
-                  </p>
-                </div>
-              ))}
+          <div className="konsoll__bolk">REGELTILSTANDER</div>
+          {ut._vurderinger.map((v) => (
+            <div className={`regel regel--${v.tilstand}`} key={v.id}>
+              <div className="regel__topp">
+                <span className="regel__navn">
+                  {v.prioritet}. {v.navn}
+                </span>
+                <Merke tilstand={v.tilstand} />
+              </div>
+              <p className="regel__forklaring">{v.forklaring}</p>
             </div>
-          )}
+          ))}
 
-          <button
-            onClick={() => setVisDatakontrakt(!visDatakontrakt)}
-            style={{
-              fontFamily: MONO,
-              fontSize: 11,
-              letterSpacing: "0.08em",
-              color: C.konsollDempet,
-              background: "transparent",
-              border: "none",
-              padding: "14px 0 10px",
-              cursor: "pointer",
-              borderTop: `1px solid ${C.konsollKant}`,
-              width: "100%",
-              textAlign: "left",
-              marginTop: 20,
-            }}
-          >
-            {visDatakontrakt ? "▾" : "▸"} DATAKONTRAKT
-          </button>
-
-          {visDatakontrakt && (
-            <pre
-              style={{
-                fontFamily: MONO,
-                fontSize: 11,
-                color: C.utslag,
-                background: C.konsollFlate,
-                padding: 12,
-                borderRadius: 4,
-                overflowX: "auto",
-                margin: 0,
-                lineHeight: 1.6,
-              }}
-            >
-{JSON.stringify(
-  {
-    mønster: ut.mønster,
-    sikkerhet: ut.sikkerhet,
-    ogsåUtslag: ut.ogsåUtslag,
-    utelukket: ut.utelukket,
-    ikkeVurdert: ut.ikkeVurdert,
-    visningsmodus: ut.visningsmodus,
-    tiltak: ut.tiltak,
-  },
-  null,
-  2
-)}
-            </pre>
-          )}
+          <div className="konsoll__bolk">DATAKONTRAKT</div>
+          <pre className="kontrakt">
+            {JSON.stringify(
+              {
+                monster: ut.monster,
+                sikkerhet: ut.sikkerhet,
+                ogsaaUtslag: ut.ogsaaUtslag,
+                utelukket: ut.utelukket,
+                ikkeVurdert: ut.ikkeVurdert,
+                sporsmaal: ut.sporsmaal,
+                tiltak: ut.tiltak,
+              },
+              null,
+              2
+            )}
+          </pre>
         </div>
 
-        {/* Tjenesteskjerm */}
-        <div className="lg:col-span-3">
-          <div
-            style={{
-              fontFamily: MONO,
-              fontSize: 11,
-              letterSpacing: "0.08em",
-              color: C.grå,
-              marginBottom: 10,
-            }}
-          >
-            DET ARBEIDSGIVEREN SER
-          </div>
-          <TjenesteSkjerm
-            input={input}
-            ut={ut}
-            virksomhet={SCENARIER[scenario].navn}
-          />
-          <p style={{ fontSize: 13, color: C.grå, marginTop: 12, lineHeight: 1.6 }}>
-            Skjermen til høyre er generert fra datakontrakten til venstre. All
-            tekst ligger i et separat objekt, ikke i motoren.
+        <div>
+          <p className="skjerm__merkelapp">DET ARBEIDSGIVEREN SER</p>
+          <Skjerm navn={SCENARIER[scenario].navn} data={data} ut={ut} onSvar={svar} />
+          <p className="hjelpetekst">
+            Skjermen er generert fra datakontrakten. All tekst ligger i et eget objekt, ikke i
+            motoren.
           </p>
         </div>
       </div>
